@@ -32,7 +32,7 @@ Inspired by platforms like *chess.com* but designed to be lightweight and custom
 ![Standard Mode](./screenshots/standard.png)
 
 ### Atomic Explosion
-![Chess 960](./screenshots/atomic.png)
+![Chess 960](./screenshots/chess960.png)
 
 ### Customize Drawer
 ![Customize Drawer](./screenshots/customize.png)
