@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>the Crazy Chess — 2 Player</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/png" href="logo-thecrazychess.png" />
+  <meta name="theme-color" content="#0b0e13" />
+</head>
+<body>
+  <main class="app">
+    <!-- BRAND -->
+    <header class="topbar">
+      <a href="./" class="brand" aria-label="the Crazy Chess — home">
+        <img src="./logo-thecrazychess.png" alt="the Crazy Chess" class="brand-img" decoding="async" fetchpriority="high" />
+      </a>
+      <h1 class="visually-hidden">the Crazy Chess</h1>
+    </header>
+
+    <div class="layout">
+      <!-- LEFT -->
+      <aside class="leftbar">
+        <div class="mobile-sticky">
+          <button id="new" class="btn primary wide">New Game</button>
+          <div id="status" class="status-chip">Ready</div>
+        </div>
+
+        <section class="panel modes">
+          <h2>Game Modes</h2>
+          <nav class="mode-grid" id="modeGrid">
+            <button class="mode-card" data-mode="standard">
+              <div class="mode-title">Standard</div>
+              <p>Classic chess. No twists.</p>
+            </button>
+            <button class="mode-card" data-mode="atomic">
+              <div class="mode-title">Atomic</div>
+              <p>Captures cause an explosion.</p>
+            </button>
+            <button class="mode-card" data-mode="chess960">
+              <div class="mode-title">Chess960</div>
+              <p>Randomized back rank.</p>
+            </button>
+          </nav>
+        </section>
+
+        <div class="tips">
+          <h3>Tips</h3>
+          <ul>
+            <li>Drag a piece to move it. Tap also works.</li>
+            <li>Use Menu for Fullscreen, Customize, Export.</li>
+            <li>Atomic: captures explode neighbors.</li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- CENTER -->
+      <section class="board-wrap">
+        <div id="board" class="board" aria-label="Chessboard"></div>
+
+        <!-- Under-board menu -->
+        <div class="board-actions">
+          <div class="menu-anchor">
+            <button id="miniMenuBtn" class="mini-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="miniSheet" title="Menu">⋮</button>
+            <div id="miniSheet" class="mini-sheet" role="menu">
+              <button id="actionFullscreen" class="mini-item" role="menuitem">Fullscreen</button>
+              <button id="actionCustomize"  class="mini-item" role="menuitem">Customize…</button>
+              <button id="actionNew"        class="mini-item" role="menuitem">New Game</button>
+              <button id="actionExport"     class="mini-item" role="menuitem">Export PGN</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drag layer (absolute pieces rendered here while dragging) -->
+        <div id="drag-layer" class="drag-layer" aria-hidden="true"></div>
+      </section>
+
+      <!-- RIGHT -->
+      <aside class="rightbar" aria-live="polite">
+        <section class="panel moves-panel">
+          <button id="movesToggle" class="moves-toggle" aria-expanded="true" aria-controls="movesContent">
+            <h2>Moves</h2>
+            <span class="chev">⌄</span>
+          </button>
+          <div id="movesContent" class="moves-content open">
+            <table class="moves-table" aria-label="Moves by player">
+              <thead>
+                <tr><th>#</th><th>White</th><th>Black</th></tr>
+              </thead>
+              <tbody id="movesBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Promotion -->
+  <div id="promo-backdrop" class="backdrop hidden" aria-hidden="true">
+    <div class="promo-modal" role="dialog" aria-modal="true" aria-labelledby="promo-title">
+      <h3 id="promo-title">Promote pawn to:</h3>
+      <div class="promo-grid">
+        <button class="promo-btn" data-piece="q">Queen</button>
+        <button class="promo-btn" data-piece="r">Rook</button>
+        <button class="promo-btn" data-piece="b">Bishop</button>
+        <button class="promo-btn" data-piece="n">Knight</button>
+      </div>
+      <button id="promo-cancel" class="btn outline">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Customize drawer -->
+  <div id="drawer" class="drawer">
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h3>Customize</h3>
+        <button id="drawerClose" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="drawer-body">
+        <section>
+          <h4>Piece style</h4>
+          <div class="choice-grid" id="pieceChoices">
+            <button class="choice" data-piece-style="classic"><span class="choice-title">Classic</span><span class="choice-preview">♔♕♖♗♘♙</span></button>
+            <button class="choice" data-piece-style="letters"><span class="choice-title">Letters</span><span class="choice-preview">K Q R B N P</span></button>
+            <button class="choice" data-piece-style="outline"><span class="choice-title">Outline</span><span class="choice-preview">♔♕♖♗♘♙</span></button>
+            <button class="choice" data-piece-style="fantasy"><span class="choice-title">Fantasy</span><span class="choice-preview">♚♛♜♝♞♟</span></button>
+            <button class="choice" data-piece-style="minimal"><span class="choice-title">Minimal</span><span class="choice-preview">● ○ ● ○ ● ○</span></button>
+            <button class="choice" data-piece-style="shadow"><span class="choice-title">Shadow</span><span class="choice-preview">♔♕♖♗♘♙</span></button>
+            <button class="choice" data-piece-style="emoji"><span class="choice-title">Emoji</span><span class="choice-preview">♔ ♕ ♖ ♗ ♘ ♙</span></button>
+          </div>
+        </section>
+
+        <section>
+          <h4>Board theme</h4>
+          <div class="theme-grid" id="themeGrid">
+            <button class="theme-tile" data-theme="tournament"><span>Tournament</span></button>
+            <button class="theme-tile" data-theme="wood"><span>Wood</span></button>
+            <button class="theme-tile" data-theme="blue"><span>Blue</span></button>
+            <button class="theme-tile" data-theme="green"><span>Green</span></button>
+            <button class="theme-tile" data-theme="slate"><span>Slate</span></button>
+            <button class="theme-tile" data-theme="purple"><span>Purple</span></button>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div id="drawerBackdrop" class="drawer-backdrop"></div>
+  </div>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>
