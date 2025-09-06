@@ -46,11 +46,3 @@ Inspired by platforms like *chess.com* but designed to be lightweight and custom
 - **Vanilla JavaScript (ESM)** – drag & drop physics, game logic  
 - **[chess.js](https://github.com/jhlywa/chess.js/)** – move validation and rules engine  
 
----
-
-## ⚡ Getting Started
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/YOUR-USERNAME/thecrazychess.git
-cd thecrazychess
