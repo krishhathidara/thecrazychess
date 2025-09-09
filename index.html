@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>the Crazy Chess — 2 Player</title>
+  <title>The Crazy Chess — 2 Player</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" type="image/png" href="logo-thecrazychess.png" />
   <meta name="theme-color" content="#0b0e13" />
 </head>
 <body>
   <main class="app">
-    <!-- BRAND -->
     <header class="topbar">
       <a href="./" class="brand" aria-label="the Crazy Chess — home">
         <img src="./logo-thecrazychess.png" alt="the Crazy Chess" class="brand-img" decoding="async" fetchpriority="high" />
@@ -19,7 +18,6 @@
     </header>
 
     <div class="layout">
-      <!-- LEFT -->
       <aside class="leftbar">
         <div class="mobile-sticky">
           <button id="new" class="btn primary wide">New Game</button>
@@ -47,18 +45,16 @@
         <div class="tips">
           <h3>Tips</h3>
           <ul>
-            <li>Drag a piece to move it. Tap also works.</li>
-            <li>Use Menu for Fullscreen, Customize, Export.</li>
+            <li>Click a piece to select; click a target to move.</li>
+            <li>Drag also works; illegal drops snap back.</li>
             <li>Atomic: captures explode neighbors.</li>
           </ul>
         </div>
       </aside>
 
-      <!-- CENTER -->
       <section class="board-wrap">
         <div id="board" class="board" aria-label="Chessboard"></div>
 
-        <!-- Under-board menu -->
         <div class="board-actions">
           <div class="menu-anchor">
             <button id="miniMenuBtn" class="mini-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="miniSheet" title="Menu">⋮</button>
@@ -71,11 +67,10 @@
           </div>
         </div>
 
-        <!-- Drag layer (absolute pieces rendered here while dragging) -->
+        <!-- Absolute layer for the dragging ghost -->
         <div id="drag-layer" class="drag-layer" aria-hidden="true"></div>
       </section>
 
-      <!-- RIGHT -->
       <aside class="rightbar" aria-live="polite">
         <section class="panel moves-panel">
           <button id="movesToggle" class="moves-toggle" aria-expanded="true" aria-controls="movesContent">
