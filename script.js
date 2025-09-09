@@ -1,6 +1,6 @@
 import { Chess } from "https://unpkg.com/chess.js@1.4.0/dist/esm/chess.js";
 
-/* Modes */
+/* ---------- Modes ---------- */
 const MODES = {
   standard: { atomic: false, chess960: false, label: "Standard" },
   atomic:   { atomic: true,  chess960: false, label: "Atomic" },
@@ -8,7 +8,7 @@ const MODES = {
 };
 const files = "abcdefgh";
 
-/* DOM */
+/* ---------- DOM ---------- */
 const boardWrap = document.querySelector(".board-wrap");
 const boardEl   = document.getElementById("board");
 const statusEl  = document.getElementById("status");
@@ -43,21 +43,23 @@ const movesContent = document.getElementById("movesContent");
 /* Drag layer */
 const dragLayer = document.getElementById("drag-layer");
 
-/* State */
+/* ---------- State ---------- */
 let chess;
 let selected = null;
 let currentMode = "standard";
 let pendingPromotion = null;
 
 /* Drag state */
-let drag = null; // { from, ghostEl, srcPieceEl, startCenter, pointerOffset, last, raf }
+let drag = null;
+const DRAG_THRESHOLD = 6; // px
+let suppressClick = false;
 
 /* Prefs */
-const PREFS_KEY = "crazychess_prefs_v2";
+const PREFS_KEY = "crazychess_prefs_v3";
 let prefs = { pieceStyle: "classic", theme: "tournament", _preFsSq: null };
 loadPrefs();
 
-/* Boot */
+/* ---------- Boot ---------- */
 buildBoard();
 wireUI();
 applyTheme(prefs.theme);
@@ -65,7 +67,7 @@ applyPieceStyle(prefs.pieceStyle);
 applyRoute();
 fitBoardToViewport();
 
-/* ---------------- UI ---------------- */
+/* ---------- UI ---------- */
 function wireUI(){
   newBtn.addEventListener("click", () => newGame(currentMode));
   modeGrid.addEventListener("click", (e) => {
@@ -77,7 +79,6 @@ function wireUI(){
   });
   window.addEventListener("hashchange", applyRoute);
 
-  // Promotion
   promoButtons.forEach(btn => {
     btn.addEventListener("click", () => {
       if (!pendingPromotion) { closePromotion(); return; }
@@ -87,7 +88,6 @@ function wireUI(){
   });
   promoCancel.addEventListener("click", () => { pendingPromotion = null; closePromotion(); render(); });
 
-  // Drawer
   drawerBackdrop.addEventListener("click", closeDrawer);
   drawerClose.addEventListener("click", closeDrawer);
   pieceChoices.addEventListener("click", e => {
@@ -101,7 +101,6 @@ function wireUI(){
     applyTheme(prefs.theme); highlightThemes();
   });
 
-  // Menu
   miniMenuBtn.addEventListener("click", () => {
     const open = miniSheet.classList.toggle("open");
     miniMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
@@ -113,7 +112,6 @@ function wireUI(){
   actionNew.addEventListener("click", () => { newGame(currentMode); closeMini(); });
   actionExport.addEventListener("click", () => { exportPGN(); closeMini(); });
 
-  // Fullscreen & resize
   actionFullscreen.addEventListener("click", toggleFullscreen);
   document.addEventListener("fullscreenchange", onFsChange);
   window.addEventListener("resize", () => {
@@ -121,16 +119,18 @@ function wireUI(){
     else fitBoardToViewport();
   });
 
-  // Moves collapse mobile
   if (movesToggle) {
     movesToggle.addEventListener("click", () => {
       const open = movesContent.classList.toggle("open");
       movesToggle.setAttribute("aria-expanded", open ? "true" : "false");
     });
   }
+
+  // Single-click selection & move
+  boardEl.addEventListener("click", onBoardClick, false);
 }
 
-/* ---------------- Routing ---------------- */
+/* ---------- Routing ---------- */
 function applyRoute(){
   const hash = (location.hash || "#standard").slice(1);
   currentMode = MODES[hash] ? hash : "standard";
@@ -139,7 +139,7 @@ function applyRoute(){
   newGame(currentMode);
 }
 
-/* ---------------- Board ---------------- */
+/* ---------- Board ---------- */
 function buildBoard(){
   boardEl.innerHTML = "";
   for (let r = 8; r >= 1; r--){
@@ -148,14 +148,12 @@ function buildBoard(){
       const b = document.createElement("button");
       b.className = "sq " + (((r + f) % 2) ? "dark" : "light");
       b.dataset.square = sq;
-      b.addEventListener("click", onSquareClick); // fallback tap-to-move
       boardEl.appendChild(b);
     }
   }
 }
 
 function render(){
-  // reset squares, reinsert piece spans
   boardEl.querySelectorAll(".sq").forEach(el => {
     el.innerHTML = "";
     el.classList.remove("src","tgt","capture");
@@ -167,7 +165,9 @@ function render(){
     span.dataset.square = el.dataset.square;
     span.dataset.color = p.color;
     span.dataset.type  = p.type;
-    span.addEventListener("pointerdown", onPieceDown, { passive:false });
+
+    // Drag hook (does NOT select)
+    span.addEventListener("pointerdown", onPiecePointerDown);
     el.appendChild(span);
   });
 
@@ -179,7 +179,7 @@ function render(){
   renderMoves();
 }
 
-/* ---------------- Glyph ---------------- */
+/* ---------- Glyph ---------- */
 function glyph({ type, color }){
   switch (prefs.pieceStyle){
     case "letters": { const m={k:"k",q:"q",r:"r",b:"b",n:"n",p:"p"}; const ch=m[type]||"?"; return color==="w"?ch.toUpperCase():ch; }
@@ -190,7 +190,7 @@ function glyph({ type, color }){
   }
 }
 
-/* ---------------- Moves table ---------------- */
+/* ---------- Moves table ---------- */
 function renderMoves(){
   const h = chess.history({ verbose: true });
   movesBody.innerHTML = "";
@@ -208,124 +208,196 @@ function renderMoves(){
   }
 }
 
-/* ---------------- Tap-to-move fallback ---------------- */
-function onSquareClick(e){
-  if (drag) return; // ignore while dragging
-  const sq = e.currentTarget.dataset.square;
-  if (!selected){
-    const p = chess.get(sq);
-    if (!p || p.color !== chess.turn()) return;
-    selected = sq; showLegal(sq); return;
+/* ---------- Click selection/move ---------- */
+function onBoardClick(e){
+  if (suppressClick) return; // ignore click right after a real drag
+
+  const pieceEl = e.target.closest(".piece");
+  const sqEl    = e.target.closest(".sq");
+  if (!sqEl) return;
+
+  const sq = sqEl.dataset.square;
+
+  if (pieceEl){
+    const from = pieceEl.dataset.square;
+    const pc   = chess.get(from);
+
+    if (!selected){
+      if (pc && pc.color === chess.turn()){
+        selected = from; showLegal(from);
+      }
+      return;
+    }
+
+    if (from === selected){ clearMarks(); selected = null; return; }
+
+    if (pc && pc.color !== chess.turn()){
+      if (isLegal(selected, from)){
+        const moved = tryMove(selected, from);
+        if (!moved) statusEl.textContent = "Illegal move.";
+        clearMarks(); selected = null;
+      }
+      return;
+    } else if (pc && pc.color === chess.turn()){
+      clearMarks(); selected = from; showLegal(from);
+      return;
+    }
   }
-  if (sq === selected){ clearMarks(); selected = null; return; }
-  const moved = tryMove(selected, sq);
-  if (!moved) render();        // ensure source piece is visible again if illegal
-  clearMarks(); selected = null;
+
+  if (selected){
+    const moved = tryMove(selected, sq);
+    if (!moved) statusEl.textContent = "Illegal move.";
+    clearMarks(); selected = null;
+  }
+}
+function isLegal(from, to){
+  return chess.moves({ square: from, verbose:true }).some(m => m.to === to);
 }
 
-/* ---------------- Drag & physics ---------------- */
-function onPieceDown(e){
+/* ---------- Drag logic ---------- */
+function onPiecePointerDown(e){
   const from = e.currentTarget.dataset.square;
   const p = chess.get(from);
   if (!p || p.color !== chess.turn()) return;
 
-  e.preventDefault(); // prevent page scroll on mobile
-  selected = from; showLegal(from);
-
-  // Hide the source piece immediately so it looks "picked up"
-  const srcCell   = boardEl.querySelector(`[data-square="${from}"]`);
-  const srcPiece  = srcCell?.querySelector(".piece");
-  if (srcPiece) srcPiece.style.opacity = "0";
-
-  // Prepare ghost
-  const ghost = document.createElement("div");
-  ghost.className = "drag-piece";
-  ghost.textContent = e.currentTarget.textContent;
-  dragLayer.appendChild(ghost);
-
-  const sqRect  = e.currentTarget.getBoundingClientRect();
-  const startCx = sqRect.left + sqRect.width/2;
-  const startCy = sqRect.top  + sqRect.height/2;
-
-  document.body.classList.add("dragging");
   drag = {
-    from,
-    ghostEl: ghost,
-    srcPieceEl: srcPiece,       // <— keep a handle to restore on cancel/illegal
-    startCenter: { x:startCx, y:startCy },
-    pointerOffset: { x: e.clientX - startCx, y: e.clientY - startCy },
-    last: {x:e.clientX, y:e.clientY},
-    raf: 0
+    primed: true, dragging:false, from, color:p.color,
+    srcPieceEl: e.currentTarget,
+    startX: e.clientX, startY: e.clientY,
+    lastX: e.clientX, lastY: e.clientY,
+    ghostEl: null, startCenter: centerOf(from),
+    pointerOffset: null, raf:0, clr:null
   };
 
-  followPointer(e.clientX, e.clientY);
-  window.addEventListener("pointermove", onPieceMove, { passive:false });
-  window.addEventListener("pointerup",   onPieceUp,   { once:true });
-  window.addEventListener("pointercancel", onPieceCancel, { once:true });
+  window.addEventListener("pointermove", onPiecePointerMove, { passive:false });
+  window.addEventListener("pointerup", onPiecePointerUp, { once:true });
+  window.addEventListener("pointercancel", onPiecePointerCancel, { once:true });
 }
 
-function onPieceMove(e){
+function onPiecePointerMove(e){
   if (!drag) return;
+  drag.lastX = e.clientX; drag.lastY = e.clientY;
+
+  if (drag.primed){
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.hypot(dx,dy) > DRAG_THRESHOLD) startDrag(e);
+    return;
+  }
+
+  // follow cursor exactly (GPU transform)
   e.preventDefault();
-  drag.last = { x:e.clientX, y:e.clientY };
   if (!drag.raf){
     drag.raf = requestAnimationFrame(() => {
       drag.raf = 0;
-      followPointer(drag.last.x, drag.last.y);
+      followPointer(drag.lastX, drag.lastY);
     });
   }
 }
 
-function followPointer(px, py){
-  // magnet toward nearest square center
-  const snap = nearestCenter(px, py);
-  const k = 0.20;
-  const tx = (px - 21 - drag.pointerOffset.x) * (1-k) + (snap.x - 21) * k;
-  const ty = (py - 21 - drag.pointerOffset.y) * (1-k) + (snap.y - 21) * k;
-  drag.ghostEl.style.transform = `translate(${tx}px, ${ty}px)`;
+function startDrag(e){
+  drag.primed = false; drag.dragging = true;
+
+  const ghost = document.createElement("div");
+  ghost.className = "drag-piece " + (drag.color === "w" ? "w" : "b");
+  const p = chess.get(drag.from);
+  ghost.textContent = glyph(p);
+  dragLayer.appendChild(ghost);
+  drag.ghostEl = ghost;
+
+  if (drag.srcPieceEl) drag.srcPieceEl.style.opacity = "0";
+
+  const c = centerOf(drag.from);
+  drag.startCenter = c;
+  drag.pointerOffset = { x: e.clientX - c.x, y: e.clientY - c.y };
+
+  document.body.classList.add("dragging");
+  followPointer(e.clientX, e.clientY);
 }
 
-function onPieceUp(e){
+function onPiecePointerUp(e){
   if (!drag) return;
-  const { from, ghostEl, srcPieceEl } = drag;
+
+  const wasDragging = drag.dragging;
+  if (wasDragging) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+
+  if (!wasDragging){
+    cleanupDrag(false);     // tap → click handler does selection
+    return;
+  }
+
   const to = pointToSquare(e.clientX, e.clientY);
+  const sameSquare = !!to && to === drag.from;
 
-  const targetCenter = to ? centerOf(to) : drag.startCenter;
-  animateTo(ghostEl, targetCenter.x, targetCenter.y, 140, () => {
-    ghostEl.remove();
+  // If dropped off-board or same square, animate back and restore
+  if (!to || sameSquare){
+    animateTo(drag.ghostEl, drag.startCenter.x, drag.startCenter.y, 120, () => {
+      safeRemoveGhost();
+      document.body.classList.remove("dragging");
+      if (drag.srcPieceEl) drag.srcPieceEl.style.opacity = "1";
+      cleanupDrag(true);
+      clearMarks(); selected = null;
+    });
+    drag.clr = setTimeout(safeRemoveGhost, 300);
+    return;
+  }
+
+  // Try the move; if legal, animate with the EXISTING drag ghost inside animateBoardMove
+  const moved = tryMove(drag.from, to, /*viaDrag*/ true);
+  if (!moved){
+    // illegal → fly back
+    animateTo(drag.ghostEl, drag.startCenter.x, drag.startCenter.y, 120, () => {
+      safeRemoveGhost();
+      document.body.classList.remove("dragging");
+      if (drag.srcPieceEl) drag.srcPieceEl.style.opacity = "1";
+      cleanupDrag(true);
+      clearMarks(); selected = null;
+    });
+    drag.clr = setTimeout(safeRemoveGhost, 300);
+  } else {
+    // animateBoardMove will remove ghost & restore visibility after render
     document.body.classList.remove("dragging");
-    const moved = to ? tryMove(from, to) : false;
-
-    if (!moved) {
-      // illegal or cancelled → show the original piece again
-      if (srcPieceEl) srcPieceEl.style.opacity = "1";
-      render(); // ensure full state is clean
-    }
+    // cleanup will be done inside animateBoardMove/finalize path
     drag = null;
-    clearMarks(); selected = null;
-  });
-
-  window.removeEventListener("pointermove", onPieceMove);
+  }
 }
 
-function onPieceCancel(){
+function onPiecePointerCancel(){
   if (!drag) return;
-  const { ghostEl, startCenter, srcPieceEl } = drag;
-  animateTo(ghostEl, startCenter.x, startCenter.y, 140, () => {
-    ghostEl.remove();
+  if (!drag.dragging){ cleanupDrag(false); return; }
+  animateTo(drag.ghostEl, drag.startCenter.x, drag.startCenter.y, 120, () => {
+    safeRemoveGhost();
     document.body.classList.remove("dragging");
-    if (srcPieceEl) srcPieceEl.style.opacity = "1"; // restore
-    drag = null;
+    if (drag.srcPieceEl) drag.srcPieceEl.style.opacity = "1";
+    cleanupDrag(true);
     clearMarks(); selected = null;
   });
-  window.removeEventListener("pointermove", onPieceMove);
+  drag.clr = setTimeout(safeRemoveGhost, 300);
 }
 
-/* --- drag helpers --- */
-function nearestCenter(px, py){
-  const toSq = pointToSquare(px, py);
-  return toSq ? centerOf(toSq) : { x:px, y:py };
+function cleanupDrag(){
+  window.removeEventListener("pointermove", onPiecePointerMove);
+  drag = null;
 }
+
+/* exact follow: translate3d with no easing */
+function followPointer(px, py){
+  const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sq"));
+  const halfGlyph = (size * 0.72) / 2;
+  const cx = px - drag.pointerOffset.x;
+  const cy = py - drag.pointerOffset.y;
+  const x = cx - halfGlyph;
+  const y = cy - halfGlyph;
+  drag.ghostEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+}
+
+function safeRemoveGhost(){
+  if (!drag) return;
+  if (drag.clr){ clearTimeout(drag.clr); drag.clr = null; }
+  if (drag.ghostEl && drag.ghostEl.parentNode) drag.ghostEl.remove();
+}
+
+/* --- helpers used by drag --- */
 function pointToSquare(px, py){
   const r = boardEl.getBoundingClientRect();
   if (px < r.left || px > r.right || py < r.top || py > r.bottom) return null;
@@ -339,15 +411,15 @@ function centerOf(sq){
   return { x: r.left + r.width/2, y: r.top + r.height/2 };
 }
 function animateTo(el, cx, cy, ms=140, done=()=>{}){
-  const size = 42;
-  const x = cx - size/2, y = cy - size/2;
+  const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sq"));
+  const x = cx - (size*0.72)/2, y = cy - (size*0.72)/2;
   el.style.transition = `transform ${ms}ms cubic-bezier(.2,.9,.2,1.02)`;
   const end = () => { el.removeEventListener("transitionend", end); el.style.transition = ""; done(); };
   el.addEventListener("transitionend", end);
-  requestAnimationFrame(() => el.style.transform = `translate(${x}px, ${y}px)`);
+  requestAnimationFrame(() => el.style.transform = `translate3d(${x}px, ${y}px, 0)`);
 }
 
-/* ---------------- Legal target dots ---------------- */
+/* ---------- Highlights ---------- */
 function showLegal(from){
   clearMarks();
   const srcEl = boardEl.querySelector(`[data-square="${from}"]`);
@@ -368,15 +440,13 @@ function clearMarks(){
   });
 }
 
-/* ---------------- Move logic (promotion + atomic) ---------------- */
-function tryMove(from, to){
+/* ---------- Move logic (promotion + atomic) ---------- */
+function tryMove(from, to /*, viaDrag=false*/){
   const needsPromotion = willPromote(from, to);
   const isAtomic = MODES[currentMode].atomic;
 
   if (!isAtomic){
     if (needsPromotion){ 
-      // For promotion, restore the source visibility now; we show modal and wait.
-      if (drag?.srcPieceEl) drag.srcPieceEl.style.opacity = "1";
       pendingPromotion = {from,to}; openPromotion(); 
       return false; 
     }
@@ -386,7 +456,6 @@ function tryMove(from, to){
   }
 
   if (needsPromotion){
-    if (drag?.srcPieceEl) drag.srcPieceEl.style.opacity = "1";
     pendingPromotion = {from,to}; openPromotion();
     return false;
   }
@@ -406,20 +475,52 @@ function willPromote(from, to){
   return (piece.color === "w" && rank === 8) || (piece.color === "b" && rank === 1);
 }
 
+/* ---------- Smooth animation of the move (reuses drag ghost if present) ---------- */
 function animateBoardMove(mv, killed={own:false,opp:false}){
-  // capture fade
-  if (mv.flags.includes("c")){
-    const capEl = boardEl.querySelector(`[data-square="${mv.to}"] .piece`);
-    if (capEl){
-      capEl.style.transition = "opacity 120ms ease";
-      capEl.style.opacity = "0";
-      setTimeout(() => { render(); finalize(mv, killed); }, 120);
-      return;
-    }
+  const srcPieceEl = boardEl.querySelector(`[data-square="${mv.from}"] .piece`);
+  const tgtPieceEl = boardEl.querySelector(`[data-square="${mv.to}"] .piece`);
+
+  // Use existing drag ghost if available; else create a fresh one
+  let ghost = drag?.ghostEl || null;
+  const usingDragGhost = !!ghost;
+
+  if (!ghost){
+    ghost = document.createElement("div");
+    ghost.className = "drag-piece " + (mv.color === "w" ? "w" : "b");
+    ghost.textContent = glyph({ type: mv.piece, color: mv.color });
+    dragLayer.appendChild(ghost);
+
+    // place at source center
+    const start = centerOf(mv.from);
+    const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sq"));
+    const startX = start.x - (size*0.72)/2, startY = start.y - (size*0.72)/2;
+    ghost.style.transform = `translate3d(${startX}px, ${startY}px, 0)`;
   }
-  render();
-  finalize(mv, killed);
+
+  // Hide the original source piece (keep hidden until we re-render)
+  if (srcPieceEl) srcPieceEl.style.opacity = "0";
+
+  // If capture, fade target piece while ghost slides in
+  if (tgtPieceEl){
+    tgtPieceEl.style.transition = "opacity 140ms ease";
+    tgtPieceEl.style.opacity = "0";
+  }
+
+  const end = centerOf(mv.to);
+  animateTo(ghost, end.x, end.y, 160, () => {
+    // Clean the ghost, then render the new position (single refresh prevents flicker)
+    if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    render();
+    finalize(mv, killed);
+
+    // restore visibility if any old element remains (defensive)
+    if (srcPieceEl) srcPieceEl.style.opacity = "1";
+
+    // ensure drag state is cleared (if we reused it)
+    if (usingDragGhost) cleanupDrag();
+  });
 }
+
 function finalize(mv, killed){
   if (killed.opp){
     statusEl.textContent = `${MODES[currentMode].label} • ${mv.color === "w" ? "White" : "Black"} wins by explosion!`;
@@ -436,7 +537,7 @@ function finalize(mv, killed){
   }
 }
 
-/* ---------------- Atomic helpers ---------------- */
+/* ---------- Atomic helpers ---------- */
 function atomicExplode(mv){
   const killed = { own:false, opp:false };
   const area = neighbors8(mv.to); if (!area.includes(mv.to)) area.push(mv.to);
@@ -460,7 +561,7 @@ function neighbors8(square){
   return res;
 }
 
-/* ---------------- New game & Chess960 ---------------- */
+/* ---------- New game & Chess960 ---------- */
 function newGame(mode){
   selected=null; pendingPromotion=null; movesBody.innerHTML="";
   chess = MODES[mode]?.chess960 ? new Chess(gen960()) : new Chess();
@@ -475,12 +576,12 @@ function gen960(){
 }
 function idx(a){ const r=[]; for(let i=0;i<a.length;i++) if(a[i]==null) r.push(i); return r; }
 
-/* ---------------- Themes & piece style ---------------- */
+/* ---------- Themes & piece style ---------- */
 function applyTheme(name){
   const THEMES={
-    tournament:{light:"#dff7df",dark:"#4aa95a"},
+    tournament:{light:"#dff7df",dark:"#3ea554"},
     wood:{light:"#f0d9b5",dark:"#b58863"},
-    blue:{light:"#bcd5ff",dark:"#5784e7"},
+    blue:{light:"#cde0ff",dark:"#4f7fe0"},
     green:{light:"#d5f5cb",dark:"#67b96d"},
     slate:{light:"#d9dde3",dark:"#7b8794"},
     purple:{light:"#e2d4ff",dark:"#8a5cf6"},
@@ -518,7 +619,8 @@ function adjustFsSquareSize(){
   document.documentElement.style.setProperty("--sq", size+"px");
 }
 function fitBoardToViewport(){
-  const r = boardWrap.getBoundingClientRect(); const maxW = Math.floor(r.width);
+  const r = boardWrap.getBoundingClientRect();
+  const maxW = Math.floor(r.width);
   if (maxW>0){ const sq = Math.floor(maxW/8); document.documentElement.style.setProperty("--sq", sq+"px"); }
 }
 
@@ -534,3 +636,7 @@ function exportPGN(){
 /* Prefs */
 function loadPrefs(){ try{ const s=localStorage.getItem(PREFS_KEY); if(s) prefs={...prefs,...JSON.parse(s)}; }catch{} }
 function savePrefs(){ try{ localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }catch{} }
+
+/* Modal helpers */
+function openPromotion(){ promoBackdrop.classList.remove("hidden"); promoBackdrop.setAttribute("aria-hidden","false"); }
+function closePromotion(){ promoBackdrop.classList.add("hidden"); promoBackdrop.setAttribute("aria-hidden","true"); }
